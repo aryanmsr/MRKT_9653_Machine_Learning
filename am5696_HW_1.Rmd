@@ -1,0 +1,213 @@
+---
+title: "am5696_HW_1"
+author: "Aryan Mishra"
+date: "2/17/2022"
+output:
+  word_document: default
+  html_document: default
+---
+
+## Loading the Relevant Libraries.
+```{r}
+
+library(plyr)
+library(dplyr)
+library(glmnet)
+library(mgcv)
+library(Metrics)
+library(fastDummies)
+library(data.table)
+
+```
+
+## Setting the Seed and Working Directory.
+```{r}
+set.seed(1)
+setwd('/Users/aryan/Desktop/MSBA_Spring_22/Machine Learning /Homework_1')
+```
+
+## Loading the Dataset.
+```{r}
+data("dji30ret", package = "rugarch")
+head(dji30ret)
+```
+## Question 1
+```{r}
+print(dim(dji30ret))
+print(summary(dji30ret))
+```
+
+## Question 2A
+```{r}
+aa <- as.data.frame(dji30ret[['AA']], row.names = row.names(dji30ret))
+colnames(aa)[1] <- "Target"
+head(aa)
+```
+
+## Question 2B
+```{r}
+aa <- aa %>% bind_cols(data.frame(t(ldply(1:5, lag, x= (dji30ret$AA))))) #Adding lagged returns of AA using some R magic
+aa <- na.omit(aa) #Removing NAs
+head(aa)
+```
+
+## Question 2B (continued)
+```{r}
+
+print(summary(aa))
+```
+
+## Question 2C 
+```{r}
+x <- model.matrix(Target~.,aa)[,-1]
+y <- aa$Target
+print(which(rownames(aa) %in% c("1987-03-23", "2002-12-31"))) #Finding out the indices for the relevant dates.
+print(which(rownames(aa) %in% c("2003-01-01", "2009-02-03")))
+
+```
+As we can see, the range for the training data is from index 1 to index 3983, while the range for the testing data is from index index 3984 to index 5516. 
+
+
+## Question 2C (continued)
+```{r pressure1, echo=FALSE}
+#Train-Test Split
+x_train <- x[1:3983,]
+x_test <- x[3984:5516,]
+y_train <- y[1:3983]
+y_test <- y[3984:5516]
+
+#Initial Model Fit
+grd <- 10 ^ seq( 10, -2, length = 100)
+set.seed(1)
+ridge_mod <- glmnet(x_train, y_train, alpha=0, lambda = grd, thresh = 1e-12)
+
+#Cross-Validation
+cv.out <- cv.glmnet(x_train, y_train, alpha = 0, nfolds=5)
+plot(cv.out)
+
+
+```
+
+## Question 2C (continued)
+```{r}
+bestlam <- cv.out$lambda.min
+print(bestlam)
+```
+The optimal lambda in this case is 0.02156627. Therefore, we will use this value when fitting our model.
+
+## Question 2C (continued)
+```{r}
+#Fitting Model using Optimal Lambda
+set.seed(1)
+ridge_mod <- glmnet(x_train, y_train, alpha=0, lambda = bestlam)
+print(summary(ridge_mod))
+
+```
+
+## Question 2D
+```{r}
+#Predicting Model
+set.seed(1)
+ridge_pred <- predict(ridge_mod, s = 0, newx = x_test)
+print(mae(y_test, ridge_pred))
+```
+As seen above, the MAE is 0.01772329.
+
+## Question 2D (continued)
+```{r pressure, echo=FALSE}
+plot(ridge_pred, y_test,xlab = "Predicted Values", ylab = "Observed Values") 
+```
+
+Conclusions: Even though it might seem like we have a very low mean absolute error, in the context of predicting daily stock returns, the model performs poorly. Essentially, a MAE of 0.0177 implies that our average ABSOLUTE error is 1.77%, and in a data set with a mean daily return of 0.0001576 (0.01576%), the error is quite substantial. In the world of finance, this could lead to huge losses, especially also in the presence of outliers (which are indeed present in our data set). This model is basically an autoregressive model, specifically an AR(5) model, which is rarely utilized in technical analysis to forecast future security prices. This is because we are implicitly assuming that the future will resemble the past, which can prove inaccurate under certain market conditions, such as financial crises, or the surge of 'meme-stocks'. 
+
+Furthermore, note that since the number of predictors is a lot lower than the number of observations, and that the relationship between the past 5 lagged returns and today's returns is rarely perfectly linear, a ridge regression will not perform well, which might explain why our model is performing poorly. 
+
+
+## Question 3A
+```{r}
+df_main <- data.frame(matrix(ncol = 7, nrow = 0))
+for (i in colnames(dji30ret)){
+  stock_df <- as.data.frame(dji30ret[[i]], row.names = row.names(dji30ret))
+  stock_df <- stock_df %>% bind_cols(data.frame(t(ldply(1:5, lag, x= (dji30ret[,i])))))
+  stock_df <- na.omit(stock_df)
+  stock_df[7] <- i
+  df_main <- rbind(df_main, stock_df)
+  }
+
+colnames(df_main) = c('Daily_Returns', paste0("Lagged_returns_", 1:5), 'Ticker_')
+
+for (stock in 2:length(colnames(dji30ret))){
+  df_main[stock+6] = dummy_cols(df_main$Ticker, remove_first_dummy = TRUE)[stock]
+  colnames(df_main)[stock+6] = c(paste0(colnames(dji30ret)[stock],'_dummy'))}
+head(df_main)
+```
+
+```{r}
+print(summary(df_main))
+```
+
+##Question 3A (continued)
+```{r}
+print(dim(df_main))
+```
+
+## Question 3B 
+```{r plot3, echo=FALSE}
+df_main <- setDT(df_main, keep.rownames = TRUE)[]
+df_main$rn <- as.Date(df_main$rn, format= "%Y-%m-%d")
+train <- subset(df_main, rn>= "1987-03-16" & rn <= "2002-12-31")
+train <- subset(train, select = -c(Ticker_) ) #Don't need this column anymore
+train <- subset(train, select = -c(rn) ) #Don't need this column anymore
+test <- subset(df_main, rn>= "2003-01-01" & rn <= " 2009-02-03")
+test <- subset(test, select = -c(Ticker_) ) #Don't need this column anymore
+test <- subset(test, select = -c(rn) ) #Don't need this column anymore
+
+x_train <- model.matrix(Daily_Returns~.,train)[,-1] #Convert to numeric to avoid errors.
+x_train <- x_train[, 1:5 ]
+x_test <- model.matrix(Daily_Returns~.,test)[,-1]
+x_test <- x_test[, 1:5 ]
+y_train <- train[, 1]
+y_train <- as.numeric(unlist(y_train)) #Convert to numeric to avoid errors.
+y_test <- test[, 1]
+y_test <- as.numeric(unlist(y_test))
+
+
+grd <- 10 ^ seq( 10, -2, length = 100)
+set.seed(1)
+ridge_mod <- glmnet(x_train, y_train, alpha=0, lambda = grd)
+cv.out <- cv.glmnet(x_train, y_train, alpha = 0, nfolds=5)
+plot(cv.out)
+```
+
+## Question 3B (continued)
+```{r}
+bestlam <- cv.out$lambda.min
+print(bestlam)
+```
+
+## Question 3B (continued)
+```{r}
+grd <- 10 ^ seq( 10, -2, length = 100)
+set.seed(1)
+ridge_mod <- glmnet(x_train, y_train, alpha=0, lambda = bestlam)
+print(summary(ridge_mod))
+```
+
+## Question 3C
+```{r}
+set.seed(1)
+ridge_pred <- predict(ridge_mod, s = 0, newx = x_test)
+print(mae(y_test, ridge_pred))
+
+```
+
+## Question 3C (continued)
+```{r plot4, echo=FALSE}
+plot(ridge_pred, y_test,xlab = "Predicted Values", ylab = "Observed Values") 
+
+```
+Conclusions: Compared to our previous model, we notice that this model performs better in terms of MAE, with a lower MAE of 0.0127. One reasonable explanation for a lower MAE could be that we have more observations. Also note that the mean daily average return for this data set is 0.0003194, which is 0.03194%, and since our average ABSOLUTE error is 1.27%, this model is still a very poor model (although still better than the previous model). This is because the number of observations is a lot higher than the number of predictors and the relationship between the past 5 lagged returns and daily returns is again almost never linear, so a ridge regression is not a viable choice at the end of the day. 
+
+
+## Question 3D
+Yes. We can include the dummy variables in our data set as possible features that could help us predict the daily returns. This will increase the number of predictors and add complexity to our model, which theoretically should reduce bias and improve the error. On a more intuitive level, the stock ticker (stock name) should contain at some level of information about the company, which can lead to better fit of the model. Moreover, we could also include interactions between dummy variables to capture industry-wide trends (e.g. interact all technology stocks), which may add robustness to the model. 
