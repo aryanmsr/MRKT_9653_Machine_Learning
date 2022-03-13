@@ -1,0 +1,258 @@
+---
+title: "am5696_HW_2"
+author: "Aryan Mishra"
+date: "2/24/2022"
+output:
+  word_document: default
+  html_document: default
+---
+
+
+```{r}
+set.seed(1)
+library(caret)
+library(plyr)
+library(dplyr)
+library(C50)
+library(tree)
+library(randomForest)
+library(gbm)
+library(caret)
+
+library(kernlab)
+setwd('/Users/aryan/Desktop/MSBA_Spring_22/MRKT_9653_ML/Homework_2')
+```
+
+
+
+#Downloading the Data and Printing Summary (Q1)
+```{r}
+data <- read.csv("/Users/aryan/Desktop/MSBA_Spring_22/MRKT_9653_ML/Homework_2/bank-additional/bank-additional-full.csv", header=TRUE, sep=";")
+```
+
+```{r}
+cols_to_remove <-  c(9,10,11,20)
+colnames(data[,cols_to_remove])
+data_reduced <- data[,-which(names(data) %in% colnames(data[,cols_to_remove]))]
+
+```
+We remove duration since it highly affects the output target (if duration = 0, then y = 'no'). Furthermore, duration is not known before a call is performed. Also, after the end of the call y is obviously known. Therefore, duration is redundant when it comes to predicting y. 
+
+From a modeling perspective, month and day_of_week have multiple categories, which can be problematic for tree-based methods that search through all features/categories for each split. However, more importantly, from a business perspective, the day of the week and month are not really useful variables to identify customers who would subscribe to the product since they usually don't have an effect on the firm's ability to attract potential customers. Even if they did have an effect, it is extremely hard to control these factors if the firm wishes to attract new customers. Finally, nr.employed also is a variable that is not really useful at all from a commercial perspective. The number of employees of the banking institution has little to no effect on the success of the current marketing campaign. 
+
+
+```{r}
+print(summary(data_reduced))
+```
+
+Looking at the summary of the imported data (excluding the variables we removed), we notice some interesting insights. First of all, the average (mean) age of the bank customer is 40, implying most of the clients of this institution are in their middle ages and thus, are more likely to have a relatively high level of income compared to some of the younger customers. The mean 'campaign' is 2.568, indicating that on average, the bank performed multiple contacts during the current campaign for a particular client. The median number of pdays, including the first and third quadrilles, interestingly is 999, which implies almost all of the clients were not previously contacted during prior campaign. This shows us that the bank is mostly targeting new customers (which makes sense). Other interesting insights include the consumer confidence index, which has an average of -40.5. The consumer confidence index tells us how optimistic people are about the economy and their ability to find jobs. A mean score of -40.5 indicates at the time the bank was conducting this marketing campaign, the consumers were less optimistic than the benchmark CCI of 100 set in the reference period (most likely 1985). Interestingly, the average consumer price index, which is a measure of inflation, is at 93.58, indicating a 6.42% decrease in the price of the market basket compared to the reference period. Furthermore, the median euribor3m rate of 4.857, coupled with the rest of the economic indicators hints that this marketing campaign was most likely conducted during 2008-2010, when the financial crisis hit the world (I later confirmed that this data was collected from May 2008 to November 2010). I hypothesize that this might have a major impact on the effectiveness of the marketing campaign, especially given the possibility that it was conducted during the height of the global financial crisis.    
+
+
+#Data Pre-Processing (Q2)
+
+
+```{r}
+data_reduced[data_reduced == "unknown"] <- NA #Removing NAs
+data_reduced <- na.omit(data_reduced)
+```
+
+```{r}
+data_reduced["job"][data_reduced["job"] != "unemployed"] <- "employed"
+data_reduced["marital"][data_reduced["marital"] == "divorced"] <- "single" 
+for(i in 1 : nrow(data_reduced)){
+     if (data_reduced$education[i] == 'illiterate'){
+         data_reduced$education[i] = 0
+     } else if (data_reduced$education[i] == 'basic.4y'){
+         data_reduced$education[i] = 1
+     } else if (data_reduced$education[i] == 'basic.6y'){
+         data_reduced$education[i] = 2
+     } else if (data_reduced$education[i] == 'basic.9y'){
+         data_reduced$education[i] = 3
+     } else if (data_reduced$education[i] == 'high.school'){
+        data_reduced$education[i] = 4
+     } else if (data_reduced$education[i] == 'professional.course'){
+         data_reduced$education[i] = 5
+     }
+       else if (data_reduced$education[i] == 'university.degree'){
+           data_reduced$education[i] = 6
+     }
+}
+data_reduced$education<-as.numeric(data_reduced$education)
+data_reduced["poutcome"][data_reduced["poutcome"] == "failure"] <- "nonexistent" 
+```
+
+
+#Train-Test Split & Transforming Characters into Factors (Q3)
+
+
+```{r}
+set.seed(1)
+train <- sample(1:nrow(data_reduced), nrow(data_reduced) / 2)
+data_reduced.test <- data_reduced[-train, ]
+data_reduced[sapply(data_reduced, is.character)] <- lapply(data_reduced[sapply(data_reduced, is.character)], 
+                                                           as.factor)
+data_reduced.test[sapply(data_reduced.test, is.character)] <- lapply(data_reduced.test[sapply(data_reduced.test, is.character)],as.factor)
+```
+
+Let's verify if we successfully transformed the characters into factors.
+
+```{r}
+str(data_reduced) 
+```
+
+```{r}
+str(data_reduced.test)
+```
+Success! 
+
+#Decision Tree Q4
+
+```{r}
+set.seed(1)
+tree.data_reduced_gini <- tree(y ~., data_reduced, subset=train, split = 'gini') #Fitting the Tree with the Gini splitting criterion.
+tree.pred_gini <- predict(tree.data_reduced_gini, data_reduced.test, type="class") #Testing it on test set.
+```
+
+```{r}
+summary(tree.data_reduced_gini)
+```
+We see that the training error rate is 9.486%. The residual mean deviance is 0.4254. Note that a small deviance indicates that our tree provides a good fit to the (training) data. Let us now display the tree structure using the plot() and text() functions.  
+
+```{r pressure1, echo=TRUE}
+plot(tree.data_reduced_gini)
+text(tree.data_reduced_gini, pretty = 0, cex=0.8) #Pretty ugly tree I know
+```
+In order to properly evaluate the performance of the decision tree, we must estimate the test error instead of simply using only the training error. The following code block shows us the confusion matrix from which we can estimate the test error.
+
+```{r}
+confusionMatrix(tree.pred_gini, data_reduced$y[-train])
+```
+
+As seen above, building the tree on the training set and evaluating its performance on the test set leads to correct predictions for around 87.7% of the locations in the test data set. However, we have to be careful and instead look at the Balanced Accuracy as the proper metric since we have an imbalanced dataset (more on why is explained in Q7). The balanced accuracy is in fact 63.47 %, considerably lower than 87.7%. 
+
+Let us now check whether pruning the tree might lead to improved results. For this, we will have to perform cross-validation in order to determine the optimal level of tree complexity. Cost complexity will be used to select a sequence of trees for consideration. 
+
+```{r}
+set.seed(3)
+cv.data_reduced_gini <- cv.tree(tree.data_reduced_gini, FUN = prune.misclass)
+names(cv.data_reduced_gini)
+```
+
+```{r}
+cv.data_reduced_gini
+```
+"dev" corresponds to the cross validation error rate in this instance. Interestingly, we see that the cross-validation error rate is the same across all trees with different number of terminal nodes. We can verify this by plotting the error rate as a function of both size and k.
+
+```{r pressure2, echo=TRUE}
+par(mfrow = c(1, 2))
+plot(cv.data_reduced_gini$size, cv.data_reduced_gini$dev,type = "b")
+plot(cv.data_reduced_gini$k, cv.data_reduced_gini$dev,type = "b")
+```
+Now that we have trained and tested this particular decision tree, we will now perform the same steps, but this time use 'deviance' as the splitting criterion to examine any possible differences.
+
+```{r}
+set.seed(1)
+tree.data_reduced_deviance <- tree(y ~., data_reduced, subset=train, split = 'deviance')
+tree.pred_deviance <- predict(tree.data_reduced_deviance, data_reduced.test, type="class")
+summary(tree.data_reduced_deviance)
+
+```
+We see that the training error rate is 11.26%, which is higher than the decision tree where we used the gini criterion to split the nodes (9.486%). The residual mean deviance is 0.6194, which is also higher than the previous case, indicating that the tree with the 'deviance' split is a worse fit than the tree with the 'gini' split to the training data. However, to truly see if the first decision tree is better than the second (and not just overfitting the data), we need to evaluate the test error. Let us first display the tree structure using the plot() and text() functions. 
+
+```{r pressure3, echo=TRUE}
+plot(tree.data_reduced_deviance)
+text(tree.data_reduced_deviance, pretty = 0, cex = .5) #Much cleaner and less complex
+```
+
+In order to properly evaluate the performance of the decision tree, we must estimate the test error instead of simply using only the training error. The following code block shows us the confusion matrix from which we can estimate the test error.
+
+```{r}
+confusionMatrix(tree.pred_deviance, data_reduced$y[-train])
+```
+
+As seen above, building the second decision tree (where 'deviance' is the splitting criterion) on the training set and evaluating its performance on the test set leads to correct predictions for around 88.7% of the locations in the test data set. However, the balanced accuracy (which is the more meaningful metric) is lower, at 58.31%, indicating that the tree with the "deviance" splitting criterion is worse than the one with the "gini" criterion. Let us now consider whether pruning the tree might lead to improved results. For this, we will have to perform cross-validation in order to determine the optimal level of tree complexity. Cost complexity will be used to select a sequence of trees for consideration. 
+
+```{r}
+set.seed(3)
+cv.data_reduced_deviance <- cv.tree(tree.data_reduced_deviance, FUN = prune.misclass)
+names(cv.data_reduced_deviance)
+```
+
+```{r}
+cv.data_reduced_deviance
+```
+As seen above, the cross validation error rate is lowest using a decision tree of size 4 or 3. We can also verify this with a plot.
+
+```{r pressure4, echo=TRUE}
+par(mfrow = c(1, 2))
+plot(cv.data_reduced_deviance$size, cv.data_reduced_deviance$dev,type = "b")
+plot(cv.data_reduced_deviance$k, cv.data_reduced_deviance$dev,type = "b")
+```
+Since the default tree we fitted with the deviance as the splitting criterion already had a size of 4 (4 terminal nodes), thereby leading to the specification with the lowest cross validation rate, we will not perform any further configurations to the decision tree model. 
+
+#Fitting Random Forest (Q5)
+
+```{r pressure5, echo=TRUE}
+set.seed(1)
+rf.data_reduced <- randomForest(y~., data = data_reduced, subset = train, mtry = 5, importance = TRUE)
+varImpPlot(rf.data_reduced)
+```
+
+As we can see above, we can measure the variable importance using Mean Decrease Accuracy, and Mean Decrease Gini. The former is based upon the mean decrease of accuracy in predictions on the out of bag samples when a given variable is excluded from the model. The latter is a measure of the total decrease in node impurity that results from splits over that variable, averaged over all trees. The higher the value of mean decrease accuracy or mean decrease gini score , higher the importance of the variable in the model. In the plot shown above, we can clearly see that 'euribor3m' is the most important variable. This is unsurprising since the bank is indeed advertising bank term deposits, and consumers will generally look at the interest rate to see if this product will indeed be an attractive option. If the euribor3m rate is relatively high, this will trickle down to banks offering higher interest rates in the future, which will eventually be beneficial for the consumers.
+
+#Fitting Gradient Boosted Trees (Q6)
+
+While we have used the gbm library in class to fit a gradient boosted tree model, this time we will use the caret library to fit, test and evaluate the our model. This is because the caret library is a lot more convenient when it comes to machine learning algorithms and makes it easier to evaluate model performance.
+```{r}
+tc = trainControl(method = "repeatedcv", number = 10)
+boost.data_reduced = train(y ~., data=data_reduced[train, ], method="gbm", trControl=tc, verbose=F)
+summary(boost.data_reduced)
+```
+
+As seen above, our gradient boosted tree model also considers the euribor3m feature as the most important feature. Interestingly, it considers pdays as the second most important feature, which was also ranked pretty high in our random forest model.
+
+#Testing Models & Comparing Performances (Q7)
+
+As we hinted earlier, when comparing performances across models, we have to be very careful. Specifically, since our data is heavily imbalanced, accuracy is no longer a viable metric. This is because of the "accuracy paradox". The accuracy paradox is the paradoxical finding that accuracy is not a good metric for predictive models when classifying in predictive analytics. This is because a simple model may have a high level of accuracy but be too crude to be useful. For example, if the incidence of category A is dominant, being found in 99% of cases, then predicting that every case is category A will have an accuracy of 99%. This is why we instead will use "Balanced Accuracy". Balanced accuracy is based on two more commonly used metrics: sensitivity (also known as true positive rate or recall) and specificity (also known as true negative rate, or 1 – false positive rate). These metrics are more useful when we have imbalanced data sets. Balanced Accuracy is actually simply the arithmetic mean of Sensitivity and Specificity. 
+
+Taking this into account, we will now evaluate the performance of our models.
+
+##Performance of Random Forest
+```{r}
+set.seed(1)
+yhat.rf = predict(rf.data_reduced,newdata=data_reduced[-train,]) #Testing RF Model on New Data
+confusionMatrix(yhat.rf, data_reduced$y[-train])
+```
+As we can see, the (balanced) accuracy of the random forest is 63.9%, which is pretty good, and in fact, better than our decision tree models, which had (balanced) accuracies of 63.47% and 58.31%. 
+
+##Performance of Gradient Boosted Trees
+
+```{r}
+set.seed(1)
+yhat.boost = predict(boost.data_reduced, data_reduced[-train, ])
+confusionMatrix(yhat.boost, data_reduced$y[-train])
+
+```
+
+While at first glance it may seem that our Gradient Boosted Trees model performed better than our RF model, with a 88.9% accuracy, n fact it performed worse since the balanced accuracy is 60.5%. While usually boosted trees yield superior results, they are also more susceptible to overfitting, and are also harder to tune, which might primarily explain why our gradient boosted tree model performed worse. Indeed, Random Forest models are easier to tune with fewer hyper-parameters, and given that RF models involve the development of independent decision trees on different samples in the data, they are less susceptible to over-fitting.
+
+As a reminder, let us also check the performance of our decision trees (as seen in Q4).
+##Performance of Decision Tree (with Gini Split Criterion)
+
+```{r}
+set.seed(1)
+confusionMatrix(tree.pred_gini, data_reduced$y[-train])
+```
+
+##Performance of Decision Tree (with Deviance Split Criterion)
+```{r}
+set.seed(1)
+confusionMatrix(tree.pred_deviance, data_reduced$y[-train])
+```
+
+Looking at the two decision trees, we see that they perform worse than the RF model, which is not surprising due to the fact that RF models reduce overfitting by considering a random subset of features at each split and through bagging.  However, the decision tree with the gini splitting criterion has a higher balanced accuracy than the boosted model. As explained before, this might be because the boosted model overfitted the data and the fact that we did not properly tune the hyper parameters. 
+
+In conclusion, the RF model performed the best, followed by our decision tree models, and finally the gradient boosted tree. 
+
+
+
