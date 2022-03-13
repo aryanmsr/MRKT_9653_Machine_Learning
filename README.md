@@ -4,4 +4,4 @@
 - **Homework 2**: Based on the paper (and associated dataset) by S. Moro, P.
 Cortez and P. Rita, ”A Data-Driven Approach to Predict the Success of Bank
 Telemarketing” Decision Support Systems, Elsevier, 62:22-31, June 2014. Using Decision Trees, Random Forest, and Boosted Trees to identify customers that have high purchase intent and direct the marketing resources to them.
-- **Homework 3**: TBD
+- **Homework 3**: Application of Iterative Singular Value Decomposition for Book Recommendations 
